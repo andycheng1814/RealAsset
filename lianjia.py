@@ -7,8 +7,15 @@ import json
 import psycopg2
 import sys
 import datetime
+import argparse
 from dateutil.relativedelta import *
 from lxml import etree
+
+class ObseleteItemError(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return repr(self.value)
 
 url_pre_login = 'https://passport.lianjia.com/cas/prelogin/loginTicket?'
 url_login = 'https://passport.lianjia.com/cas/login'
@@ -17,8 +24,9 @@ url_dict = 'http://www.lianjia.com/api/getCityDict?city_id=110000&aggregation=1.
 url_analysis_day = 'http://bj.lianjia.com/fangjia/priceTrend//?analysis=1&duration=day'
 url_analysis_month = 'http://bj.lianjia.com/fangjia/priceTrend//?analysis=1'
 url_price_trend = 'http://bj.lianjia.com/fangjia/priceTrend/'
-usr = '13581540589'
-pwd = 'Wcp181114'
+usr = ''
+pwd = ''
+startdate= ''
 conn = psycopg2.connect(database="RealAsset", user="postgres", password="Wcp181114", host="localhost", port="5432")
 cur = conn.cursor()
 
@@ -107,6 +115,12 @@ def extract_single_chengjiao_page(selector):
         if not title:
             print "Error when extract single chengjiao page."
             continue
+        houseinfo['date'] = ''.join(item.xpath('div[2]/div/div[2]/div/div[1]/div/text()'))
+        houseinfo['date'] = date_format_check(houseinfo['date'])
+        d1 = datetime.datetime.strptime(houseinfo['date'],'%Y.%m.%d').date()
+        if(d1 < datetime.datetime.strptime(startdate,'%Y-%m-%d').date()):
+            raise ObseleteItemError("obselete item met")
+
         houseinfo['community'] = houseinfo['layout'] = houseinfo['square'] = ' '
         list1 = ''.join(title).split(' ')
         idx = 0
@@ -141,8 +155,6 @@ def extract_single_chengjiao_page(selector):
         for itro in intros:
             introduces += itro.text
         houseinfo['introduces'] = introduces
-        houseinfo['date'] = ''.join(item.xpath('div[2]/div/div[2]/div/div[1]/div/text()'))
-        houseinfo['date'] = date_format_check(houseinfo['date'])
         houseinfo['pricesquare'] = ''.join(item.xpath('div[2]/div/div[2]/div/div[2]/div/text()'))
         if(houseinfo['pricesquare'] == ''):
             houseinfo['pricesquare'] = '0'
@@ -212,6 +224,7 @@ def get_lianjia_chengjiao():
                     try:
                         nselector = etree.HTML(content)
                         totalpage = json.loads(nselector.xpath('/html/body/div[6]/div[2]/div[2]/div[3]/div')[0].attrib['page-data'])['totalPage']
+                        extract_single_chengjiao_page(nselector)
                     except IndexError, e:
                         #check if really no content to show
                         other = ''.join(nselector.xpath('/html/body/div[6]/div[2]/div[2]/div[3]/ul/li/p/text()'))
@@ -225,12 +238,14 @@ def get_lianjia_chengjiao():
                             continue
                         #fh.write('###########################################################################################################################################################################')
                         #fh.write(content)
+                    except ObseleteItemError, e:
+                        print "Obselete item met in %s, ignore latter pages" % url_page
+                        break
                     except Exception, e:
                         err = "Other error for %s" % url_page
                         print err
                         err_urls.add(url_page)
                         continue
-                    extract_single_chengjiao_page(nselector)
                     print "Finished %s" % url_page
                     if(pg >= totalpage):
                         break
@@ -313,8 +328,20 @@ def get_analysis_month():
         write_am_to_db(aminfo)
     print "Finished %s" % url_analysis_month
 
+def getArgs():
+    parse=argparse.ArgumentParser()
+    parse.add_argument('-lu',type=str)
+    parse.add_argument('-lp',type=str)
+    parse.add_argument('-s',type=str)
+    args=parse.parse_args()
+    return vars(args)
+
 if __name__ == '__main__':
+    args = getArgs()
+    usr = args['lu']
+    pwd = args['lp']
+    startdate = args['s']
     lianjia_login()
-    get_analysis_month()
+    get_lianjia_chengjiao()
     conn.close()
 
