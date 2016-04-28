@@ -8,6 +8,7 @@ import psycopg2
 import sys
 import datetime
 import argparse
+import time
 from dateutil.relativedelta import *
 from lxml import etree
 
@@ -90,6 +91,24 @@ def write_am_to_db(aminfo):
     order = "INSERT INTO lianjia_analysis_month(\"Date\", \"HouseAmount\", \"CustomerAmount\", \"ShowAmount\")\
         VALUES (\'%s\', \'%s\', \'%s\', \'%s\')" % (
         aminfo['date'], aminfo['houseAmount'],aminfo['customerAmount'], aminfo['showAmount'])
+    try:
+        cur.execute(order)
+    except psycopg2.DatabaseError, e:
+        err = 'Error %s' % e
+        if(err.find('duplicate key value') > 0):
+            conn.rollback()
+            return
+        else:
+            print err
+            conn.rollback()
+            conn.close()
+            sys.exit(-1)
+    conn.commit()
+
+def write_pt_to_db(ptinfo):
+    order = "INSERT INTO lianjia_price_trend(date, quantity, listprice, dealprice)\
+        VALUES (\'%s\', \'%d\', \'%s\', \'%s\')" % (
+        ptinfo['date'], ptinfo['quantity'],ptinfo['listprice'], ptinfo['dealprice'])
     try:
         cur.execute(order)
     except psycopg2.DatabaseError, e:
@@ -258,6 +277,7 @@ def get_lianjia_chengjiao():
             try:
                 nselector = etree.HTML(content)
                 totalpage = json.loads(nselector.xpath('/html/body/div[6]/div[2]/div[2]/div[3]/div')[0].attrib['page-data'])['totalPage']
+                extract_single_chengjiao_page(nselector)
             except IndexError, e:
                 # check if really no content to show
                 other = ''.join(nselector.xpath('/html/body/div[6]/div[2]/div[2]/div[3]/ul/li/p/text()'))
@@ -268,11 +288,15 @@ def get_lianjia_chengjiao():
                     err = "Index error for %s" % page
                     print err
                     continue
+            except ObseleteItemError, e:
+                print "Obselete item met in %s, ignore latter pages" % url_page
+                err_urls.remove(page)
+                continue;
             except Exception, e:
                 err = "Other error for %s" % page
                 print err
                 continue
-            extract_single_chengjiao_page(nselector)
+
             print "Finished %s" % page
             err_urls.remove(page)
 
@@ -318,21 +342,50 @@ def get_analysis_month():
     day = 1
     stdate = datetime.datetime(year, month, day)
     aminfo = {}
-    idx = 0
-    for h in amdata['houseAmount'][::-1]:
-        aminfo['date'] = stdate + relativedelta(months=-idx)
-        aminfo['houseAmount'] = h
+    midx = 0
+    for idx in range(0, amdata['houseAmount'].__len__())[::-1]:
+        aminfo['date'] = stdate + relativedelta(months=-midx)
+        aminfo['houseAmount'] = amdata['houseAmount'][idx]
         aminfo['customerAmount'] = amdata['customerAmount'][idx]
         aminfo['showAmount'] = amdata['showAmount'][idx]
-        idx += 1
+        midx += 1
         write_am_to_db(aminfo)
     print "Finished %s" % url_analysis_month
 
+def get_price_trend():
+    content = requests.get(url_price_trend, cookies=lianjia_cookies).content
+    try:
+        ptdata = json.loads(content)
+    except Exception, e:
+        err = "Exception for %s" % url_price_trend
+        print err
+
+    print "Started %s" % url_price_trend
+    # get start date
+    year = month = day = 0
+    year = int(ptdata['time']['year'])
+    month = int(filter(str.isdigit,ptdata['time']['month'].encode('utf-8')))
+    day = 1
+    stdate = datetime.datetime(year, month, day)
+    ptinfo = {}
+    midx = 0
+    for idx in range(0, ptdata['currentLevel']['month'].__len__())[::-1]:
+        ptinfo['date'] = stdate + relativedelta(months=-midx)
+        ptinfo['quantity'] = ptdata['currentLevel']['quantity']['total'][idx]
+        ptinfo['listprice'] = ptdata['currentLevel']['listPrice']['total'][idx]
+        ptinfo['dealprice'] = ptdata['currentLevel']['dealPrice']['total'][idx]
+        midx += 1
+        write_pt_to_db(ptinfo)
+    print "Finished %s" % url_price_trend
+
 def getArgs():
     parse=argparse.ArgumentParser()
-    parse.add_argument('-lu',type=str)
-    parse.add_argument('-lp',type=str)
-    parse.add_argument('-s',type=str)
+    parse.add_argument('-lu',type=str, required=True, help='lianjia username')
+    parse.add_argument('-lp',type=str, required=True, help='lianjia password')
+    parse.add_argument('-t', type=str, choices=['summary', 'trades'], default='summary', help='type')
+    now_time = datetime.datetime.now()
+    stime = now_time + datetime.timedelta(days=-30)
+    parse.add_argument('-s',type=str,default=stime.strftime('%Y-%m-%d'), help='if trades, set start date')
     args=parse.parse_args()
     return vars(args)
 
@@ -340,8 +393,17 @@ if __name__ == '__main__':
     args = getArgs()
     usr = args['lu']
     pwd = args['lp']
-    startdate = args['s']
+    type = args['t']
+    #summary info
     lianjia_login()
-    get_lianjia_chengjiao()
+    if(type == 'summary'):
+        get_analysis_day()
+        get_analysis_month()
+        get_price_trend()
+    else:
+     #historical trades
+        startdate = args['s']
+        get_lianjia_chengjiao()
+
     conn.close()
 
