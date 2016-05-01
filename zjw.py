@@ -179,6 +179,25 @@ def write_zjw_sh_to_db(sh):
             sys.exit(-1)
     conn.commit()
 
+def write_zjw_sh_month_to_db(shm):
+    order = "INSERT INTO zjw_sh_house_month(\"Date\", \"Total_signfromnet\", \"Total_square_signfromnet\",\"House_signfromnet\",\
+        \"House_square_signfromnet\") VALUES (\'%s-%s-1\', \'%s\', \'%s\', \'%s\', \'%s\')" % (\
+        shm['year'], shm['month'], shm['totalsign'], shm['totalsignarea'], shm['housesign'], shm['housesignarea'])
+
+    try:
+        cur.execute(order)
+    except psycopg2.DatabaseError, e:
+        err = 'Error %s' % e
+        if(err.find('duplicate key value') > 0):
+            conn.rollback()
+            return
+        else:
+            print err
+            conn.rollback()
+            conn.close()
+            sys.exit(-1)
+    conn.commit()
+
 def write_zjw_eh_to_db(eh):
     order = "INSERT INTO zjw_existing_house(\"Date\", \"Total_subfromnet\", \"Total_square_subfromnet\", \"House_subfromnet\",\
             \"House_square_subfromnet\", \"Commercial_subfromnet\", \"Commercial_square_subfromnet\",\
@@ -266,6 +285,18 @@ def get_sh_from_zjw(nselector):
 
     write_zjw_sh_to_db(sh)
 
+def get_sh_month_from_zjw(nselector):
+    # get date
+    shm = {}
+    shm['year'] = ''.join(nselector.xpath('//*[@id="ess_ctr5112_FDCJY_SignOnlineStatistics_year"]/text()'))
+    shm['month'] = ''.join(nselector.xpath('//*[@id="ess_ctr5112_FDCJY_SignOnlineStatistics_month"]/text()'))
+    shm['totalsign'] = ''.join(nselector.xpath('//*[@id="ess_ctr5112_FDCJY_SignOnlineStatistics_totalCount3"]/text()'))
+    shm['totalsignarea'] = ''.join(nselector.xpath('//*[@id="ess_ctr5112_FDCJY_SignOnlineStatistics_totalArea3"]/text()'))
+    shm['housesign'] = ''.join(nselector.xpath('//*[@id="ess_ctr5112_FDCJY_SignOnlineStatistics_residenceCount3"]/text()'))
+    shm['housesignarea'] =  ''.join(nselector.xpath('//*[@id="ess_ctr5112_FDCJY_SignOnlineStatistics_residenceArea3"]/text()'))
+
+    write_zjw_sh_month_to_db(shm)
+
 def get_eh_from_zjw(nselector):
     # get date
     eh= {}
@@ -352,6 +383,7 @@ if __name__ == '__main__':
     except Exception, e:
         err = "Exception for %s" % url_zjw
         print err
+    get_sh_month_from_zjw(nselector)
     get_sh_from_zjw(nselector)
     get_fh_from_zjw(nselector)
     get_eh_from_zjw(nselector)
